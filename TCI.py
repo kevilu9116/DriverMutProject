@@ -21,7 +21,6 @@ import scipy as s
 from util import *
 
 ###############################################################################################
-#Test Git Commit
 """
  The following block define the Theano functions that going to be used in the regular python funcitons
  """
