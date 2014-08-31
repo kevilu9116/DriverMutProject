@@ -17,6 +17,7 @@ Created on Sun Aug 25 08:40:33 2013
 """
 
 import numpy as np
+import sys
 from StringIO import StringIO
 
 class NamedMatrix:
@@ -189,7 +190,7 @@ class NamedMatrix:
         try:
             outMatrix = open(filePath + "/" + filename, "w") #Open file containing the output matrix
         except:
-            print "Could not find filepath. Please ensure you have given an existing filepath."
+            print "Could not find filepath to output file. Please ensure you have given an existing filepath."
             sys.exit()
 
         #Writing out the column header. Iterate through colnames in our class, and write

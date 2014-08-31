@@ -2,7 +2,7 @@
 """
 Created on Wed Aug 20 22:03:45 2014
 
-@author: kevin
+@author: kevin Lu=]]]]]]]]
 
 This module contains functions required for performing the tumor-specific 
 causal inference (TCI).  See Technical report "A method for identify driver
@@ -78,7 +78,7 @@ fscore = function([], ln_nMutMatrix_1 + ln_nMutMatrix_0 + ln_nijk11 + ln_nijk10 
 
 
 
-def calcTCI (mutcnaMatrixFN, degMatrixFN, alphaNull = [1, 1], alphaIJKList = [2, 1, 1, 2], v0=0.2, dictGeneLength = None, outputPath = "./Tumor.Type.Data/BLCA/testResults"):
+def calcTCI (mutcnaMatrixFN, degMatrixFN, alphaNull = [1, 1], alphaIJKList = [2, 1, 1, 2], v0=0.2, dictGeneLength = None, outputPath = ".", opFlags = None):
     """ 
     calcTCI (mutcnaMatrix, degMatrix, alphaIJList, alphaIJKList, dictGeneLength)
     
@@ -141,19 +141,32 @@ def calcTCI (mutcnaMatrixFN, degMatrixFN, alphaNull = [1, 1], alphaIJKList = [2,
 
     for t in range(nTumors):
         # collect data related to mutations
-        tumormutGeneIndx = [i for i, j in enumerate(mutcnaMatrix.data[t,:]) if j == 1] #WHAT DOES THIS LINE DO?
+        tumormutGeneIndx = [i for i, j in enumerate(mutcnaMatrix.data[t,:]) if j == 1]
         nTumorMutGenes = len(tumormutGeneIndx)
         tumorMutGenes=  [mutGeneNames[i] for i in tumormutGeneIndx]        
       
         #now extract the sub-matrix of mutcnaMatrix that only contain the genes that are mutated in a given tumor t
-        # stack a column of '1' to represent the A0 
+        # stack a column of '1' to represent the A0.  If combination operation is needed, new combined muation matrix 
+        # will be created         
+        
         tumorMutMatrix = mutcnaMatrix.data[:,  tumormutGeneIndx]
+        if opFlags:
+            tmpNamedMat = NamedMatrix(npMatrix = tumorMutMatrix, colnames = tumorMutGenes, rownames = tumorNames)
+            tumorNamedMatrix = createComb(tmpNamedMat, opFlags)
+            if not tumorNamedMatrix:  # this tumor do not have any joint mutations that is oberved in 2% of all tumors
+                continue
+            tumorMutGenes = tumorNamedMatrix.colnames
+            tumorMutMatrix = tumorNamedMatrix.data
+            
         
         ## check operation options:  1) orginal, do nothing and contiue
         # otherwise creat combinary matrix using the tumorMutMatrix 
         # createCombMatrix(tumorMutMatrix, operationFlag)
-        
-        lntumorMutPriors = calPrior(tumorMutGenes, dictGeneLength, v0)  # a m-dimension vector with m being number of mutations
+        if not opFlags:
+            lntumorMutPriors = calcLnPrior(tumorMutGenes, dictGeneLength, v0)  # a m-dimension vector with m being number of mutations
+        else:
+            lntumorMutPriors = calcLnCombPrior(tumorMutGenes, dictGeneLength, v0)
+            
         tumorMutGenes.append('A0')
         
         # collect data related to DEGs
@@ -173,9 +186,6 @@ def calcTCI (mutcnaMatrixFN, degMatrixFN, alphaNull = [1, 1], alphaIJKList = [2,
         
         lnFScore = add(tumorLnFScore, tumorMutPriorMatrix)
         
-        tmp = NamedMatrix(npMatrix = tumorLnFScore, colnames = tumorDEGGenes, rownames = tumorMutGenes )
-        tmp.writeToText(filePath, tumorNames[t]+ "-tumorLnFScore.csv")
-
         # now we need to caclculate the normalized lnFScore so that each         
         columnAccumLogSum = np.zeros(nTumorDEGs)        
         for col in range(nTumorDEGs):
@@ -190,7 +200,7 @@ def calcTCI (mutcnaMatrixFN, degMatrixFN, alphaNull = [1, 1], alphaIJKList = [2,
         
         #write out the results        
         tumorPosterior = NamedMatrix(npMatrix = posterior, rownames = tumorMutGenes, colnames = tumorDEGGenes)     
-        tumorPosterior.writeToText(filePath, filename = tumorNames[t] + "-mut-vs-DEG-posterior.csv")
+        tumorPosterior.writeToText(outputPath, filename = tumorNames[t] + "-mut-vs-DEG-posterior.csv")
         
 
 def calcNullF(degMatrix, alphaNull):
@@ -290,14 +300,14 @@ def calcF(mutcnaMatrix, degMatrix, alphaIJKList):
     condMutDEG_11 = nijk_11.get_value().T / ni1_vec   
     condMutDEG_01 = nijk_01.get_value().T / ni0_vec  
     elementsToSetZero = np.where( condMutDEG_11.T <= condMutDEG_01.T)
-    fvalues[elementsToSetZero] = -100  # exponentiation of -17 is already zero
+    fvalues[elementsToSetZero] = -20  # exponentiation of -17 is already zero
     
     return fvalues
  
 
-def calPrior(geneNames, dictGeneLength, v0):
+def calcLnPrior(geneNames, dictGeneLength, v0):
     """
-    calPrior(geneNames, dictGeneLength, v0)
+    calLnPrior(geneNames, dictGeneLength, v0)
     
     Input: 
         geneNames       A list of SAG-affected genes that are altered in a give tumor
@@ -313,13 +323,68 @@ def calPrior(geneNames, dictGeneLength, v0):
     prior =  [(1-v0)* x / sumInverseLength for x in inverseLength] + [v0]
     lnprior = [math.log(x) for x in prior]
     return lnprior 
- 
 
+
+def calcLnCombPrior(combGeneNames, geneLengthDict, v0):
+    listGeneLength = []    
+    for name in combGeneNames:
+        gene1, gene2 = name.split("/")
+        totalLength = float(geneLengthDict[gene1]) + float(geneLengthDict[gene2])
+        listGeneLength.append(totalLength)
+        
+    inverseLength = [1 / float(x) for x in listGeneLength] 
+    sumInverseLength = sum(inverseLength)
+    prior =  [(1-v0)* x / sumInverseLength for x in inverseLength] + [v0]
+    lnprior = [math.log(x) for x in prior]
+    return lnprior 
+    
+    
+ 
+def createComb(mutationMatrix, flag):
+    """
+    
+    """    
+    geneList = mutationMatrix.getColnames()
+    numRows, numCols = np.shape(mutationMatrix.data)
+    newNumCols = ((numCols - 1) * numCols) / 2
+    tmpColNames = []
+    outputMatrix = np.zeros((numRows, newNumCols), dtype = np.float32)   
+    
+    #mutationData = mutationMatrix.data
+    count = 0
+    for i in range(len(geneList) - 1):
+        for j in range(i + 1, len(geneList)):
+            gene1Vals = mutationMatrix.data[:, i]
+            gene2Vals = mutationMatrix.data[:, j]
+            tmpColNames.append(geneList[i] + "/" + geneList[j])
+            if flag == "AND":
+                outputMatrix[:, count] = gene1Vals * gene2Vals
+            elif flag == "OR":
+                results = gene1Vals + gene2Vals
+                results[np.where(results > 0)] = 1
+                outputMatrix[:, count] = results
+            else:
+                print "Flag operation was not defined. Please specify \"AND\" or \"OR\" as your flag."
+                sys.exit()
+            count += 1
+    
+    # clean the columns that have too few 1s
+    totalOnes = outputMatrix.sum(axis = 0)
+    colsToKeep = np.where((totalOnes / numRows) > .02)[0]
+    if colsToKeep.size == 0:
+        return None
+    outputMatrix = outputMatrix[:, colsToKeep]
+    newColNames = [tmpColNames[colsToKeep[i]] for i in range(colsToKeep.size)]
+
+    return NamedMatrix(npMatrix = outputMatrix, colnames = newColNames, rownames = mutationMatrix.getRownames())
+    
+ 
+    
     
 def main():
     
-    geneLengthDict = parseGeneLengthDict("Gene.Exome.Length.csv")
-    calcTCI("/home/kevin/Dropbox (XinghuaLu)/TCI/Tumor.Type.Data/BLCA/BLCA.GtM.csv", "/home/kevin/Dropbox (XinghuaLu)/TCI/Tumor.Type.Data/BLCA/BLCA.GeM.csv", dictGeneLength = geneLengthDict)
+    geneLengthDict = parseGeneLengthDict("/home/xinghua/Dropbox (XinghuaLu)/src/TCI/Tumor.Type.Data/Gene.Exome.Length.csv")
+    calcTCI("/home/xinghua/Dropbox (XinghuaLu)/src/TCI/chunhui.testmatrices/GtM.testset.csv", "/home/xinghua/Dropbox (XinghuaLu)/src/TCI/chunhui.testmatrices/GeM.testset.csv", outputPath = "/home/xinghua/Dropbox (XinghuaLu)/src/TCI/chunhui.testmatrices",  dictGeneLength = geneLengthDict, opFlags = "AND")
 
 if __name__ == "__main__":
     main()       
