@@ -2,7 +2,7 @@
 """
 Created on Wed Aug 20 22:03:45 2014
 
-@author: kevin Lu=]]]]]]]]
+@author: Kevin Lu
 
 This module contains functions required for performing the tumor-specific 
 causal inference (TCI).  See Technical report "A method for identify driver
@@ -314,24 +314,47 @@ def calcLnPrior(geneNames, dictGeneLength, v0):
         dictGeneLength  A dictionary contain the length of all genes
         v0              A weight of a "leak node" besides SGA-affected genes 
                         that may contribute to the differential expression of a gene
+
+    Output:
+        lnprior         A list of prior probability values (natural logged) for each given gene
                         
     """
 
+    #extract gene lengths for all the genes in 'geneNames'
     listGeneLength = [dictGeneLength[g]  for g in geneNames]
-    inverseLength = [1 / float(x) for x in listGeneLength] 
+    #Calculate the prior probability by taking each ###########FINISH THIS COMMENT
+    inverseLength = [1 / float(x) for x in listGeneLength]
     sumInverseLength = sum(inverseLength)
-    prior =  [(1-v0)* x / sumInverseLength for x in inverseLength] + [v0]
+    prior =  [(1-v0) * x / sumInverseLength for x in inverseLength] + [v0]
     lnprior = [math.log(x) for x in prior]
     return lnprior 
 
 
 def calcLnCombPrior(combGeneNames, geneLengthDict, v0):
-    listGeneLength = []    
+    """
+    calLnCombPrior(geneNames, dictGeneLength, v0)
+    
+    Input: 
+        combGeneNames   A list of combined SAG-affected genes that are altered in a give tumor
+        dictGeneLength  A dictionary contain the length of all genes
+        v0              A weight of a "leak node" besides SGA-affected genes 
+                        that may contribute to the differential expression of a gene
+
+    Output:
+        lnprior         A list of prior probability values (natural logged) for each given gene combination
+
+    """
+
+    listGeneLength = []
+
+    #extract gene lengths for each gene combination. Gene lengths for combined genes are simply the sum of
+    #the two individual gene lengths.     
     for name in combGeneNames:
         gene1, gene2 = name.split("/")
         totalLength = float(geneLengthDict[gene1]) + float(geneLengthDict[gene2])
         listGeneLength.append(totalLength)
-        
+    
+    #Calculate the prior probability by taking each ###########FINISH THIS COMMENT    
     inverseLength = [1 / float(x) for x in listGeneLength] 
     sumInverseLength = sum(inverseLength)
     prior =  [(1-v0)* x / sumInverseLength for x in inverseLength] + [v0]
@@ -339,26 +362,42 @@ def calcLnCombPrior(combGeneNames, geneLengthDict, v0):
     return lnprior 
     
     
+    
  
 def createComb(mutationMatrix, flag):
     """
-    
-    """    
+    createComb(mutationMatrix, flag):
+
+    Input:
+        mutationMatrix      An m x n matrix consisting of m tumor mutations and n potentially altered genes.
+        flag                A flag keyword that is set to either "AND" or "OR" that specifies the type of logical relation
+                            observed between two distinct genes.
+
+    Output:                 An m x ((n-1) * n) / 2 matrix consisting of m tumors and ((n-1) * n) / 2 gene pair combinations
+
+    """
+
+    #get necessary data to create the dimensions of our final output matrix
+    #(list of genes, dimensions of input mutation matrix, new number of columns for the output matrix)
     geneList = mutationMatrix.getColnames()
     numRows, numCols = np.shape(mutationMatrix.data)
     newNumCols = ((numCols - 1) * numCols) / 2
     tmpColNames = []
     outputMatrix = np.zeros((numRows, newNumCols), dtype = np.float32)   
     
-    #mutationData = mutationMatrix.data
+    #iterate through our input matrix and generate every non-repeating permutations of 2 distinct genes.
+    #For each pair, create the name "Gene1/Gene2" for that pair, then for each tumor, do an "AND" or "OR"
+    #operation between the two values
     count = 0
     for i in range(len(geneList) - 1):
         for j in range(i + 1, len(geneList)):
             gene1Vals = mutationMatrix.data[:, i]
             gene2Vals = mutationMatrix.data[:, j]
             tmpColNames.append(geneList[i] + "/" + geneList[j])
+            #'AND' the two values together
             if flag == "AND":
                 outputMatrix[:, count] = gene1Vals * gene2Vals
+            #'OR the two values together'
             elif flag == "OR":
                 results = gene1Vals + gene2Vals
                 results[np.where(results > 0)] = 1
@@ -368,7 +407,7 @@ def createComb(mutationMatrix, flag):
                 sys.exit()
             count += 1
     
-    # clean the columns that have too few 1s
+    # clean the columns that have too few 1s based on a 2% threshold
     totalOnes = outputMatrix.sum(axis = 0)
     colsToKeep = np.where((totalOnes / numRows) > .02)[0]
     if colsToKeep.size == 0:
