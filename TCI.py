@@ -189,7 +189,6 @@ sum matrix ops
 """
 m1 = T.fmatrix()
 m2 = T.fmatrix()
-
 add = function([m1, m2], m1 + m2, allow_input_downcast=True)
 
 
@@ -207,15 +206,12 @@ expMatrix = shared(np.ones((10, 10)), config.floatX)
 mDotE = function([], T.dot(mutMatrix, expMatrix))
 
 
-ln_nMutMatrix_1 = shared(np.zeros((1000, 1000)), config.floatX)
-ln_nMutMatrix_0 = shared(np.zeros((1000, 1000)), config.floatX) 
 ln_nijk11 = shared(np.zeros((1000, 1000)), config.floatX)
-ln_nijk10 = shared(np.zeros((1000, 1000)), config.floatX)  
 ln_nijk01 = shared(np.zeros((1000, 1000)), config.floatX)
-ln_nijk00 = shared(np.zeros((1000, 1000)), config.floatX)
 
 fscore = shared(np.zeros((1000, 1000)), config.floatX)
 tmpLnMatrix = shared(np.zeros((1000,1000)), config.floatX)
+accumAddFScore = function([], fscore + tmpLnMatrix)
 
 ############################################################################################################
 
@@ -241,10 +237,10 @@ def calcF(mutcnaMatrix, degMatrix, alphaIJKList):
     # add check if mutcnaMatrix degMatrix is an instance of numpy float matrix of 32 bit
     if mutcnaMatrix.dtype != np.float32:
         mutcnaMatrix = mutcnaMatrix.astype(np.float32)
-        print "Data type for mutcnaMatrix not float32, downcasting matrix."
+        #print "Data type for mutcnaMatrix not float32, downcasting matrix."
     if degMatrix.dtype != np.float32:
         degMatrix = degMatrix.astype(np.float32)
-        print "Data type for degMatrix not float32, downcasting matrix."
+        #print "Data type for degMatrix not float32, downcasting matrix."
         
     # create 32bit theano copies of mutcan and DEG matrice, make them accessable to GPU
     mutcnaMatrix = shared(mutcnaMatrix.T, config.floatX)
@@ -257,12 +253,12 @@ def calcF(mutcnaMatrix, degMatrix, alphaIJKList):
     # make a m x n matrix where a m-dimension vectior is copied n times
     aMatrix.set_value(np.tile(ni1_vec, (degMatrix.get_value().shape[1], 1)).T , config.floatX)
     tmpLnMatrix.set_value(gamma_ln_scalar(alphaIJKList[2] + alphaIJKList[3]) -  gamma_ln(), config.floatX)
-    fscore.set_value(add(fscore, tmpLnMatrix), config.floatX)
+    fscore.set_value(accumAddFScore(), config.floatX)
     
    
     aMatrix.set_value(np.tile(ni0_vec, (degMatrix.get_value().shape[1], 1)).T, config.floatX)    
     tmpLnMatrix.set_value(gamma_ln_scalar(alphaIJKList[0] + alphaIJKList[1]) - gamma_ln(), config.floatX)
-    fscore.set_value(add(fscore, tmpLnMatrix), config.floatX)
+    fscore.set_value(accumAddFScore(), config.floatX)
  
 
     #total number of cases in which mut == 1 and exp == 1
@@ -271,15 +267,15 @@ def calcF(mutcnaMatrix, degMatrix, alphaIJKList):
 
     aMatrix.set_value(mDotE() + alphaIJKList[3], config.floatX)
     nijk_11 = shared(mDotE() + alphaIJKList[3], config.floatX) 
-    tmpLnMatrix.set_value(ln_nijk11.set_value(gamma_ln() - gamma_ln_scalar(alphaIJKList[3]), config.floatX))
-    fscore.set_value(add(fscore, tmpLnMatrix), config.floatX)
+    tmpLnMatrix.set_value(gamma_ln() - gamma_ln_scalar(alphaIJKList[3]), config.floatX)
+    fscore.set_value(accumAddFScore(), config.floatX)
 
     # calc mut == 1 && deg == 0
     expMatrix.set_value(degMatrix.get_value() == 0, config.floatX)
 
     aMatrix.set_value(mDotE() + alphaIJKList[2], config.floatX)
     tmpLnMatrix.set_value(gamma_ln() - gamma_ln_scalar(alphaIJKList[2]), config.floatX)
-    fscore.set_value(add(fscore, tmpLnMatrix), config.floatX)
+    fscore.set_value(accumAddFScore(), config.floatX)
     #nijk_10 = shared(mDotE() + alphaIJKList[2], config.floatX)
 
     # calc mut == 0 && deg == 0
@@ -288,7 +284,7 @@ def calcF(mutcnaMatrix, degMatrix, alphaIJKList):
 
     aMatrix.set_value(mDotE() + alphaIJKList[0], config.floatX)
     tmpLnMatrix.set_value(gamma_ln() - gamma_ln_scalar(alphaIJKList[0]), config.floatX)
-    fscore.set_value(add(fscore, tmpLnMatrix), config.floatX)
+    fscore.set_value(accumAddFScore(), config.floatX)
 
     # calc mut == 0 && deg == 1
     expMatrix.set_value(degMatrix.get_value(), config.floatX)
@@ -296,7 +292,7 @@ def calcF(mutcnaMatrix, degMatrix, alphaIJKList):
     aMatrix.set_value(mDotE() + alphaIJKList[1], config.floatX)
     nijk_01 = shared(mDotE() + alphaIJKList[1], config.floatX)
     tmpLnMatrix.set_value(gamma_ln() - gamma_ln_scalar(alphaIJKList[1]), config.floatX)
-    fscore.set_value(add(fscore, tmpLnMatrix), config.floatX)
+    fscore.set_value(accumAddFScore(), config.floatX)
 
 
     # now caluc the theano final
@@ -429,8 +425,8 @@ def createComb(mutationMatrix, flag):
     
 def main():
     
-    geneLengthDict = parseGeneLengthDict("/home/xinghua/Dropbox (XinghuaLu)/src/TCI/Tumor.Type.Data/Gene.Exome.Length.csv")
-    calcTCI("/home/xinghua/Dropbox (XinghuaLu)/src/TCI/chunhui.testmatrices/GtM.testset.csv", "/home/xinghua/Dropbox (XinghuaLu)/src/TCI/chunhui.testmatrices/GeM.testset.csv", outputPath = "/home/xinghua/Dropbox (XinghuaLu)/src/TCI/chunhui.testmatrices",  dictGeneLength = geneLengthDict, opFlags = "AND")
+    geneLengthDict = parseGeneLengthDict("/home/kevin/Dropbox (XinghuaLu)/TCI/Tumor.Type.Data/Gene.Exome.Length.csv")
+    calcTCI("/home/kevin/Dropbox (XinghuaLu)/TCI/chunhui.testmatrices/GtM.testset.csv", "/home/kevin/Dropbox (XinghuaLu)/TCI/chunhui.testmatrices/GeM.testset.csv", outputPath = "/home/kevin/Dropbox (XinghuaLu)/TCI/chunhui.testmatrices",  dictGeneLength = geneLengthDict, opFlags = "AND")
 
 if __name__ == "__main__":
     main()       
