@@ -41,42 +41,6 @@ YSubtractX = T.switch(T.gt(x,y), yMinusx, xMinusy)
 x_prime =  T.log(1 + T.exp(YSubtractX)) + bigger
 calcSum = T.switch(T.lt(YSubtractX, maxExp), bigger, x_prime)
 logSum = function([x, y], calcSum, allow_input_downcast=True)
-###################################################################
-
-"""
-2. sum matrix ops
-"""
-m1 = T.fmatrix()
-m2 = T.fmatrix()
-
-add = function([m1, m2], m1 + m2, allow_input_downcast=True)
-
-
-    # declare a function that calcualte gammaln on a shared variable on GPU
-aMatrix = shared(np.zeros((10, 10)), config.floatX)
-gamma_ln = function([ ], T.gammaln(aMatrix))
-theanoExp = function([ ], T.exp(aMatrix))
-    
-alpha = T.fscalar()
-gamma_ln_scalar = function([alpha], T.gammaln(alpha), allow_input_downcast=True)
-
-# now compute the second part of the F-score, which is the covariance of mut and deg
-mutMatrix = shared(np.ones((10, 10)), config.floatX)  
-expMatrix = shared(np.ones((10, 10)), config.floatX)
-mDotE = function([], T.dot(mutMatrix, expMatrix))
-
-ln_nMutMatrix_1 = shared(np.zeros((1000, 1000)), config.floatX)
-ln_nMutMatrix_0 = shared(np.zeros((1000, 1000)), config.floatX) 
-ln_nijk11 = shared(np.zeros((1000, 1000)), config.floatX)
-ln_nijk10 = shared(np.zeros((1000, 1000)), config.floatX)  
-ln_nijk01 = shared(np.zeros((1000, 1000)), config.floatX)
-ln_nijk00 = shared(np.zeros((1000, 1000)), config.floatX)
-
-fscore = function([], ln_nMutMatrix_1 + ln_nMutMatrix_0 + ln_nijk11 + ln_nijk10 +  ln_nijk01 + ln_nijk00 )
-
-############################################################################################################
-
-
 
 def calcTCI (mutcnaMatrixFN, degMatrixFN, alphaNull = [1, 1], alphaIJKList = [2, 1, 1, 2], v0=0.2, dictGeneLength = None, outputPath = ".", opFlags = None):
     """ 
@@ -218,32 +182,69 @@ def calcNullF(degMatrix, alphaNull):
     return  np.array(term1 + term2 + term3)
         
         
-                            
+###################################################################
+
+"""
+sum matrix ops
+"""
+m1 = T.fmatrix()
+m2 = T.fmatrix()
+
+add = function([m1, m2], m1 + m2, allow_input_downcast=True)
+
+
+# declare a function that calcualte gammaln on a shared variable on GPU
+aMatrix = shared(np.zeros((10, 10)), config.floatX)
+gamma_ln = function([ ], T.gammaln(aMatrix))
+theanoExp = function([ ], T.exp(aMatrix))
+    
+alpha = T.fscalar()
+gamma_ln_scalar = function([alpha], T.gammaln(alpha), allow_input_downcast=True)
+
+# now compute the second part of the F-score, which is the covariance of mut and deg
+mutMatrix = shared(np.ones((10, 10)), config.floatX)  
+expMatrix = shared(np.ones((10, 10)), config.floatX)
+mDotE = function([], T.dot(mutMatrix, expMatrix))
+
+
+ln_nMutMatrix_1 = shared(np.zeros((1000, 1000)), config.floatX)
+ln_nMutMatrix_0 = shared(np.zeros((1000, 1000)), config.floatX) 
+ln_nijk11 = shared(np.zeros((1000, 1000)), config.floatX)
+ln_nijk10 = shared(np.zeros((1000, 1000)), config.floatX)  
+ln_nijk01 = shared(np.zeros((1000, 1000)), config.floatX)
+ln_nijk00 = shared(np.zeros((1000, 1000)), config.floatX)
+
+fscore = shared(np.zeros((1000, 1000)), config.floatX)
+tmpLnMatrix = shared(np.zeros((1000,1000)), config.floatX)
+
+############################################################################################################
 
 def calcF(mutcnaMatrix, degMatrix, alphaIJKList):
 
     """
     This function calculate log funciton of the Eq 7 of TCI white paper 
 
-    Input:     mutcnaMatrix      A N x m numpy matrix containing mutaiton and CNA data of N tumors and m genes
+    Input:  mutcnaMatrix      A N x m numpy matrix containing mutaiton and CNA data of N tumors and m genes
             degMatrix         A N x d numpy matrix containing DEGs from N tumors and d genes
                
-                 alphaIJList     A list of two elements containing the hyperparameter define the prior distribution for mutation events
-                 alphaIJKList    A list of four elements containing the hyperparameters defining the prior distribution of condition prability
+            alphaIJList     A list of two elements containing the hyperparameter define the prior distribution for mutation events
+            alphaIJKList    A list of four elements containing the hyperparameters defining the prior distribution of condition prability
 
     Output: A m x d matrix, in which each element contains the F-score of a pair of mutation and DEGs
 
     F-Score is calcaulated using the following equation.  \frac {\Gamma(\alpha_{ij})} {\Gamma(\alpha_{ij}+ N_{ij})}
 
     """
- 
+    
+    #Initialize fscore matrix to zero
+    fscore.set_value(np.zeros((mutcnaMatrix.shape[1], degMatrix.shape[1])), config.floatX)
     # add check if mutcnaMatrix degMatrix is an instance of numpy float matrix of 32 bit
     if mutcnaMatrix.dtype != np.float32:
         mutcnaMatrix = mutcnaMatrix.astype(np.float32)
-        #print "Data type for mutcnaMatrix not float32, downcasting matrix."
+        print "Data type for mutcnaMatrix not float32, downcasting matrix."
     if degMatrix.dtype != np.float32:
         degMatrix = degMatrix.astype(np.float32)
-        #print "Data type for degMatrix not float32, downcasting matrix."
+        print "Data type for degMatrix not float32, downcasting matrix."
         
     # create 32bit theano copies of mutcan and DEG matrice, make them accessable to GPU
     mutcnaMatrix = shared(mutcnaMatrix.T, config.floatX)
@@ -255,51 +256,57 @@ def calcF(mutcnaMatrix, degMatrix, alphaIJKList):
     
     # make a m x n matrix where a m-dimension vectior is copied n times
     aMatrix.set_value(np.tile(ni1_vec, (degMatrix.get_value().shape[1], 1)).T , config.floatX)
-    ln_nMutMatrix_1.set_value(gamma_ln_scalar(alphaIJKList[2] + alphaIJKList[3]) -  gamma_ln(), config.floatX)
+    tmpLnMatrix.set_value(gamma_ln_scalar(alphaIJKList[2] + alphaIJKList[3]) -  gamma_ln(), config.floatX)
+    fscore.set_value(add(fscore, tmpLnMatrix), config.floatX)
     
    
     aMatrix.set_value(np.tile(ni0_vec, (degMatrix.get_value().shape[1], 1)).T, config.floatX)    
-    ln_nMutMatrix_0.set_value(gamma_ln_scalar(alphaIJKList[0] + alphaIJKList[1]) - gamma_ln(), config.floatX)
-
+    tmpLnMatrix.set_value(gamma_ln_scalar(alphaIJKList[0] + alphaIJKList[1]) - gamma_ln(), config.floatX)
+    fscore.set_value(add(fscore, tmpLnMatrix), config.floatX)
+ 
 
     #total number of cases in which mut == 1 and exp == 1
     mutMatrix.set_value(mutcnaMatrix.get_value(), config.floatX)
     expMatrix.set_value(degMatrix.get_value(), config.floatX)
-    nijk_11 = shared (mDotE() + alphaIJKList[3], config.floatX) 
+
+    aMatrix.set_value(mDotE() + alphaIJKList[3], config.floatX)
+    nijk_11 = shared(mDotE() + alphaIJKList[3], config.floatX) 
+    tmpLnMatrix.set_value(ln_nijk11.set_value(gamma_ln() - gamma_ln_scalar(alphaIJKList[3]), config.floatX))
+    fscore.set_value(add(fscore, tmpLnMatrix), config.floatX)
 
     # calc mut == 1 && deg == 0
     expMatrix.set_value(degMatrix.get_value() == 0, config.floatX)
-    nijk_10 = shared(mDotE() + alphaIJKList[2], config.floatX)
+
+    aMatrix.set_value(mDotE() + alphaIJKList[2], config.floatX)
+    tmpLnMatrix.set_value(gamma_ln() - gamma_ln_scalar(alphaIJKList[2]), config.floatX)
+    fscore.set_value(add(fscore, tmpLnMatrix), config.floatX)
+    #nijk_10 = shared(mDotE() + alphaIJKList[2], config.floatX)
 
     # calc mut == 0 && deg == 0
+
     mutMatrix.set_value(mutcnaMatrix.get_value() == 0, config.floatX)
-    nijk_00 = shared(mDotE() + alphaIJKList[0], config.floatX)
+
+    aMatrix.set_value(mDotE() + alphaIJKList[0], config.floatX)
+    tmpLnMatrix.set_value(gamma_ln() - gamma_ln_scalar(alphaIJKList[0]), config.floatX)
+    fscore.set_value(add(fscore, tmpLnMatrix), config.floatX)
 
     # calc mut == 0 && deg == 1
     expMatrix.set_value(degMatrix.get_value(), config.floatX)
+
+    aMatrix.set_value(mDotE() + alphaIJKList[1], config.floatX)
     nijk_01 = shared(mDotE() + alphaIJKList[1], config.floatX)
+    tmpLnMatrix.set_value(gamma_ln() - gamma_ln_scalar(alphaIJKList[1]), config.floatX)
+    fscore.set_value(add(fscore, tmpLnMatrix), config.floatX)
 
-    # calc the gammaln of the above matrix
-    aMatrix.set_value(nijk_11.get_value(), config.floatX) 
-    ln_nijk11.set_value(gamma_ln() - gamma_ln_scalar(alphaIJKList[3]), config.floatX)
-    
-    aMatrix.set_value(nijk_10.get_value(), config.floatX)
-    ln_nijk10.set_value(gamma_ln() - gamma_ln_scalar(alphaIJKList[2]), config.floatX)
-
-    aMatrix.set_value(nijk_01.get_value(), config.floatX)
-    ln_nijk01.set_value(gamma_ln() - gamma_ln_scalar(alphaIJKList[1]), config.floatX)
-
-    aMatrix.set_value(nijk_00.get_value(), config.floatX)
-    ln_nijk00.set_value(gamma_ln() - gamma_ln_scalar(alphaIJKList[0]), config.floatX)
 
     # now caluc the theano final
-    fvalues = fscore()
-    
+    fvalues = fscore.get_value()
+
     # check if the probability that mut == 1 && deg == 1 is bigger than mut == 0 && deg == 1, 
     # if yes, set the likelihood that mutated gene is a cause to zero
     condMutDEG_11 = nijk_11.get_value().T / ni1_vec   
     condMutDEG_01 = nijk_01.get_value().T / ni0_vec  
-    elementsToSetZero = np.where( condMutDEG_11.T <= condMutDEG_01.T)
+    elementsToSetZero = np.where(condMutDEG_11.T <= condMutDEG_01.T)
     fvalues[elementsToSetZero] = -20  # exponentiation of -17 is already zero
     
     return fvalues
