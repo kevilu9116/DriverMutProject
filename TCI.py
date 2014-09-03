@@ -426,12 +426,12 @@ def createComb(mutationMatrix, flag):
 def main():
     
     geneLengthDict = parseGeneLengthDict("/home/kevin/Dropbox (XinghuaLu)/TCI/Tumor.Type.Data/Gene.Exome.Length.csv")
+    mutMatrixFilePath = "/home/kevin/Dropbox (XinghuaLu)/TCI/chunhui.testmatrices/GtM.testset.csv"
+    degMatrixFilePath = "/home/kevin/Dropbox (XinghuaLu)/TCI/chunhui.testmatrices/GeM.testset.csv"
+    outputFilePath = "/home/kevin/Dropbox (XinghuaLu)/TCI/chunhui.testmatrices"
     #Calculate TCI Score by calling calcTCI with the following arguments:
     #mutation matrix, DEG matrix, output filepath, gene length dictionary, and an optional operation flag
-    calcTCI("/home/kevin/Dropbox (XinghuaLu)/TCI/chunhui.testmatrices/GtM.testset.csv", 
-        "/home/kevin/Dropbox (XinghuaLu)/TCI/chunhui.testmatrices/GeM.testset.csv", 
-        outputPath = "/home/kevin/Dropbox (XinghuaLu)/TCI/chunhui.testmatrices",  
-        dictGeneLength = geneLengthDict, opFlags = "AND")
+    calcTCI(mutMatrixFilePath, degMatrixFilePath, outputPath = outputFilePath,  dictGeneLength = geneLengthDict, opFlags = "AND")
 
 if __name__ == "__main__":
     main()       
