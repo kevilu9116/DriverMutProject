@@ -205,7 +205,7 @@ class NamedMatrix:
         for i in range(self.shape()[0]):
             outMatrix.write(self.rownames[i]) #Write out the rowName for the particular row
             for j in self.data[i]:
-                outMatrix.write(delimiter + str(j)) #Write out each cell of data for that row, separated by the given delimiter
+                outMatrix.write(delimiter + str(round(j, 4))) #Write out each cell of data for that row, separated by the given delimiter
             outMatrix.write("\n")
             
         outMatrix.close() #Done writing matrix, close file

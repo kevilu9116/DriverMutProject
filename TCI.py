@@ -42,7 +42,7 @@ x_prime =  T.log(1 + T.exp(YSubtractX)) + bigger
 calcSum = T.switch(T.lt(YSubtractX, maxExp), bigger, x_prime)
 logSum = function([x, y], calcSum, allow_input_downcast=True)
 
-def calcTCI (mutcnaMatrixFN, degMatrixFN, alphaNull = [1, 1], alphaIJKList = [2, 1, 1, 2], v0=0.2, dictGeneLength = None, outputPath = ".", opFlags = None):
+def calcTCI (mutcnaMatrixFN, degMatrixFN, alphaNull = [1, 1], alphaIJKList = [2, 1, 1, 2], v0=0.2, dictGeneLength = None, outputPath = ".", opFlag = None):
     """ 
     calcTCI (mutcnaMatrix, degMatrix, alphaIJList, alphaIJKList, dictGeneLength)
     
@@ -77,13 +77,13 @@ def calcTCI (mutcnaMatrixFN, degMatrixFN, alphaNull = [1, 1], alphaIJKList = [2,
     try:
         mutcnaMatrix  = NamedMatrix(mutcnaMatrixFN)
     except:
-        print "Failed to import data matrix %s\n", mutcnaMatrixFN
+        print "Failed to import data matrix %s\n" % mutcnaMatrixFN
         sys.exit() 
         
     try:
         degMatrix = NamedMatrix(degMatrixFN)
     except:
-        print "Failed to import data matrix %s\n", degMatrixFN
+        print "Failed to import data matrix %s\n" % degMatrixFN
         sys.exit()
         
     if degMatrix.getRownames() != mutcnaMatrix.getRownames():
@@ -104,6 +104,10 @@ def calcTCI (mutcnaMatrixFN, degMatrixFN, alphaNull = [1, 1], alphaIJKList = [2,
     
 
     for t in range(nTumors):
+        #print pacifier
+        if t % 50 == 0:
+            print "Processed %s tumors" % str(t)
+        
         # collect data related to mutations
         tumormutGeneIndx = [i for i, j in enumerate(mutcnaMatrix.data[t,:]) if j == 1]
         nTumorMutGenes = len(tumormutGeneIndx)
@@ -114,9 +118,9 @@ def calcTCI (mutcnaMatrixFN, degMatrixFN, alphaNull = [1, 1], alphaIJKList = [2,
         # will be created         
         
         tumorMutMatrix = mutcnaMatrix.data[:,  tumormutGeneIndx]
-        if opFlags:
+        if opFlag:
             tmpNamedMat = NamedMatrix(npMatrix = tumorMutMatrix, colnames = tumorMutGenes, rownames = tumorNames)
-            tumorNamedMatrix = createComb(tmpNamedMat, opFlags)
+            tumorNamedMatrix = createComb(tmpNamedMat, opFlag)
             if not tumorNamedMatrix:  # this tumor do not have any joint mutations that is oberved in 2% of all tumors
                 continue
             tumorMutGenes = tumorNamedMatrix.colnames
@@ -126,7 +130,7 @@ def calcTCI (mutcnaMatrixFN, degMatrixFN, alphaNull = [1, 1], alphaIJKList = [2,
         ## check operation options:  1) orginal, do nothing and contiue
         # otherwise creat combinary matrix using the tumorMutMatrix 
         # createCombMatrix(tumorMutMatrix, operationFlag)
-        if not opFlags:
+        if not opFlag:
             lntumorMutPriors = calcLnPrior(tumorMutGenes, dictGeneLength, v0)  # a m-dimension vector with m being number of mutations
         else:
             lntumorMutPriors = calcLnCombPrior(tumorMutGenes, dictGeneLength, v0)
@@ -149,12 +153,19 @@ def calcTCI (mutcnaMatrixFN, degMatrixFN, alphaNull = [1, 1], alphaIJKList = [2,
         tumorMutPriorMatrix = np.tile(lntumorMutPriors, (nTumorDEGs, 1)).T
         
         lnFScore = add(tumorLnFScore, tumorMutPriorMatrix)
+
+#debug code below two lines        
+        #tmpOut = NamedMatrix(npMatrix = lnFScore, colnames = tumorDEGGenes, rownames = tumorMutGenes)
+        #tmpOut.writeToText(outputPath, filename = tumorNames[t] + "fscore.csv")
+        
         
         # now we need to caclculate the normalized lnFScore so that each         
         columnAccumLogSum = np.zeros(nTumorDEGs)        
         for col in range(nTumorDEGs):
-            currLogSum = math.log(s.spacing(1))
+            currLogSum = np.NINF
             for j in range(lnFScore.shape[0]):
+                if lnFScore[j,col] == np.NINF:
+                    continue
                 currLogSum = logSum(currLogSum, lnFScore[j,col])             
             columnAccumLogSum[col] = currLogSum
                 
@@ -193,7 +204,7 @@ add = function([m1, m2], m1 + m2, allow_input_downcast=True)
 
 
 # declare a function that calcualte gammaln on a shared variable on GPU
-aMatrix = shared(np.zeros((10, 10)), config.floatX)
+aMatrix = shared(np.zeros((1000, 1000)), config.floatX)
 gamma_ln = function([ ], T.gammaln(aMatrix))
 theanoExp = function([ ], T.exp(aMatrix))
     
@@ -201,8 +212,8 @@ alpha = T.fscalar()
 gamma_ln_scalar = function([alpha], T.gammaln(alpha), allow_input_downcast=True)
 
 # now compute the second part of the F-score, which is the covariance of mut and deg
-mutMatrix = shared(np.ones((10, 10)), config.floatX)  
-expMatrix = shared(np.ones((10, 10)), config.floatX)
+mutMatrix = shared(np.ones((1000, 1000)), config.floatX)  
+expMatrix = shared(np.ones((1000, 1000)), config.floatX)
 mDotE = function([], T.dot(mutMatrix, expMatrix))
 
 
@@ -213,9 +224,13 @@ fscore = shared(np.zeros((1000, 1000)), config.floatX)
 tmpLnMatrix = shared(np.zeros((1000,1000)), config.floatX)
 accumAddFScore = function([], fscore + tmpLnMatrix)
 
+# create 32bit theano copies of mutcan and DEG matrice, make them accessable to GPU
+mutcnaMatrix = shared(np.zeros((8192, 1000 )), config.floatX)
+degMatrix =  shared(np.zeros((8192, 1000 )), config.floatX)
+
 ############################################################################################################
 
-def calcF(mutcnaMatrix, degMatrix, alphaIJKList):
+def calcF(mutcnaInputMatrix, degInputMatrix, alphaIJKList):
 
     """
     This function calculate log funciton of the Eq 7 of TCI white paper 
@@ -233,18 +248,12 @@ def calcF(mutcnaMatrix, degMatrix, alphaIJKList):
     """
     
     #Initialize fscore matrix to zero
-    fscore.set_value(np.zeros((mutcnaMatrix.shape[1], degMatrix.shape[1])), config.floatX)
+    fscore.set_value(np.zeros((mutcnaInputMatrix.shape[1], degInputMatrix.shape[1])), config.floatX)
     # add check if mutcnaMatrix degMatrix is an instance of numpy float matrix of 32 bit
-    if mutcnaMatrix.dtype != np.float32:
-        mutcnaMatrix = mutcnaMatrix.astype(np.float32)
-        #print "Data type for mutcnaMatrix not float32, downcasting matrix."
-    if degMatrix.dtype != np.float32:
-        degMatrix = degMatrix.astype(np.float32)
-        #print "Data type for degMatrix not float32, downcasting matrix."
         
-    # create 32bit theano copies of mutcan and DEG matrice, make them accessable to GPU
-    mutcnaMatrix = shared(mutcnaMatrix.T, config.floatX)
-    degMatrix =  shared(degMatrix, config.floatX)
+    # move the input data to GPU 
+    mutcnaMatrix.set_value(mutcnaInputMatrix.T, config.floatX)
+    degMatrix.set_value(degInputMatrix, config.floatX)
 
     # calculate the first part of the F-scores
     ni1_vec = mutcnaMatrix.get_value().sum(axis = 1) + alphaIJKList[2] + alphaIJKList[3]  # a vector of length m contains total number cases in which m-th element are ONE
@@ -303,8 +312,8 @@ def calcF(mutcnaMatrix, degMatrix, alphaIJKList):
     condMutDEG_11 = nijk_11.get_value().T / ni1_vec   
     condMutDEG_01 = nijk_01.get_value().T / ni0_vec  
     elementsToSetZero = np.where(condMutDEG_11.T <= condMutDEG_01.T)
-    fvalues[elementsToSetZero] = -20  # exponentiation of -17 is already zero
-    
+    fvalues[elementsToSetZero] = np.NINF  # equivalent to set the element to 0 when exp or logSum 
+     
     return fvalues
  
 
@@ -418,20 +427,23 @@ def createComb(mutationMatrix, flag):
     outputMatrix = outputMatrix[:, colsToKeep]
     newColNames = [tmpColNames[colsToKeep[i]] for i in range(colsToKeep.size)]
 
-    return NamedMatrix(npMatrix = outputMatrix, colnames = newColNames, rownames = mutationMatrix.getRownames())
-    
- 
-    
-    
+    return NamedMatrix(npMatrix = outputMatrix, colnames = newColNames, rownames = mutationMatrix.getRownames())   
+
 def main():
     
-    geneLengthDict = parseGeneLengthDict("/home/kevin/Dropbox (XinghuaLu)/TCI/Tumor.Type.Data/Gene.Exome.Length.csv")
-    mutMatrixFilePath = "/home/kevin/Dropbox (XinghuaLu)/TCI/chunhui.testmatrices/GtM.testset.csv"
-    degMatrixFilePath = "/home/kevin/Dropbox (XinghuaLu)/TCI/chunhui.testmatrices/GeM.testset.csv"
-    outputFilePath = "/home/kevin/Dropbox (XinghuaLu)/TCI/chunhui.testmatrices"
+    geneLengthDict = parseGeneLengthDict("/home/kevin/GroupDropbox/TCI/Tumor.Type.Data/Gene.Exome.Length.csv")
+
+    mutMatrixFilePath = "/home/kevin/GroupDropbox/TCI/Tumor.Type.Data/PANCAN/PANCAN.GtM.csv"
+    degMatrixFilePath = "/home/kevin/GroupDropbox/TCI/Tumor.Type.Data/PANCAN/PANCAN.GeM.csv"
+    outputFilePath = "/home/kevin/GroupDropbox/TCI/Tumor.Type.Data/PANCAN/SingleGT.Results"
+
+#    mutMatrixFilePath = "/home/kevin/GroupDropbox/TCI/Tumor.Type.Data/BLCA/BLCA.GtM.csv"
+#    degMatrixFilePath = "/home/kevin/GroupDropbox/TCI/Tumor.Type.Data/BLCA/BLCA.GeM.csv"
+#    outputFilePath = "/home/kevin/GroupDropbox/TCI/Tumor.Type.Data/BLCA/TestLogicalAnd"
+
     #Calculate TCI Score by calling calcTCI with the following arguments:
     #mutation matrix, DEG matrix, output filepath, gene length dictionary, and an optional operation flag
-    calcTCI(mutMatrixFilePath, degMatrixFilePath, outputPath = outputFilePath,  dictGeneLength = geneLengthDict, opFlags = "AND")
+    calcTCI(mutcnaMatrixFN=mutMatrixFilePath, degMatrixFN=degMatrixFilePath, outputPath = outputFilePath,  dictGeneLength = geneLengthDict)
 
 if __name__ == "__main__":
     main()       
