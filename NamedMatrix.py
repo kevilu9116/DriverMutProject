@@ -19,6 +19,7 @@ Created on Sun Aug 25 08:40:33 2013
 import numpy as np
 import sys
 from StringIO import StringIO
+import gc
 
 class NamedMatrix:
     ## Constructor
@@ -63,7 +64,7 @@ class NamedMatrix:
             for l in lines.split("\n"):
                 self.rownames.append(l.split(',')[0]) 
             
-            if lines[-1]== '\n' :
+            if lines[-1] == '\n':
                 self.rownames.pop()
                             
             # read in data and generate a numpy data matrix
@@ -102,6 +103,11 @@ class NamedMatrix:
                     self.rownames.append('r' + str(r))
                     
         self.nrows, self.ncols = np.shape(self.data)
+	self.rownames = [x.replace("\"", "") for x in self.rownames]
+	self.colnames = [x.replace("\"", "") for x in self.colnames]
+	# force garbage collection to clean the read in text
+	gc.collect()
+	
         
                     
     def setColnames(self, colnames):
@@ -186,12 +192,19 @@ class NamedMatrix:
         
     
     ## Output matrix to a text file
-    def writeToText(self, filePath, filename, delimiter=','):
-        try:
-            outMatrix = open(filePath + "/" + filename, "w") #Open file containing the output matrix
-        except:
-            print "Could not find filepath to output file. Please ensure you have given an existing filepath."
-            sys.exit()
+    def writeToText(self,  filename, delimiter=',', filePath=None,):
+        if not filePath:
+            try: 
+                outMatrix = open(filename, "w") #Open file containing the output matrix
+            except:
+                print "Could not find filepath to output file. Please ensure you have given an existing filepath."
+                sys.exit()
+        else:                
+            try:
+                outMatrix = open(filePath + "/" + filename, "w") #Open file containing the output matrix
+            except:
+                print "Could not find filepath to output file. Please ensure you have given an existing filepath."
+                sys.exit()
 
         #Writing out the column header. Iterate through colnames in our class, and write
         # them out to the first line of the file, seperated by the given delimiter.
