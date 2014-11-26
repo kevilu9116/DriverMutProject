@@ -32,8 +32,8 @@ m1 = T.fmatrix()
 m2 = T.fmatrix()
 add = function([m1, m2], m1 + m2, allow_input_downcast=True)
 
-def calcTCI (mutcnaMatrixFN, degMatrixFN, tumorTypeFN = None, alphaNull = [1, 1], alphaIJKList = [2, 1, 1, 2], v0=0.2, 
-             dictGeneLength = None, outputPath = ".", opFlag = None, PANCANFlag = None, rowBegin=0, rowEnd = None):
+def calcTCI (mutcnaMatrixFN, degMatrixFN, tumorTypeFN = None, alphaNull = [1, 1], alphaIJKList = [2, 1, 1, 2], v0 = 0.3, 
+             ppiDict = None, dictGeneLength = None, outputPath = ".", opFlag = None, PANCANFlag = None, rowBegin=0, rowEnd = None):
     """ 
     calcTCI (mutcnaMatrix, degMatrix, alphaIJList, alphaIJKList, dictGeneLength)
     
@@ -66,12 +66,15 @@ def calcTCI (mutcnaMatrixFN, degMatrixFN, tumorTypeFN = None, alphaNull = [1, 1]
                             is caused by a non-SGA factor 
                             
         PANCANFlag          A boolean flag to indicate if we are doing PANCAN
+
+        ppiDict             A dictionary keeps PPI network in the form an adjecency list (a dictionary of dictionary)
+
         dictGeneLength      A dictionary keeps the length of each of G genes in the 
                             mutcnaMatrix
 	
-	rowBegin, rowEnd        These two arguments control allow user to choose which block out of all tumors (defined by the two 
-			    row numbers) will be processes in by this function.  This can be used to process
-			    mulitple block in a parallel fashion.
+	rowBegin, rowEnd       These two arguments control allow user to choose which block out of all tumors (defined by the two 
+                			 row numbers) will be processes in by this function.  This can be used to process
+                            mulitple block in a parallel fashion.
     """
     # check if gene length dictionary is set
     if not dictGeneLength :
@@ -125,7 +128,7 @@ def calcTCI (mutcnaMatrixFN, degMatrixFN, tumorTypeFN = None, alphaNull = [1, 1]
         # Calculate the prior probability that a tumor-type variable may influence a DEG
         # to be proportional to the number of tumors from a given type
         vt = np.sum(tumorTypeMatrix.data, 0)  # perform a rowsum to count  each type tumor
-        vtprior = np.divide(vt, float(nTumors)) 
+        vtprior = np.divide(vt, float(nTumors)) # normalize to 1, as  prior for each type of tumor
         
     # Now start looping through a chunk of individual tumors and calculate the causal scores between each pair of SGA and DEG    
     print "Done with loading data, start processing tumor " + str(rowBegin)
@@ -146,7 +149,7 @@ def calcTCI (mutcnaMatrixFN, degMatrixFN, tumorTypeFN = None, alphaNull = [1, 1]
         print "processign tumor  " + tumorNames[t]
         #print pacifier
         if t % 50 == 0:
-            print "Processed %s tumors" % str(t)
+            print "\nProcessed %s tumors" % str(t)
         
         # collect data related to DEGs to construct a submatrix containing only DEG of the tumor
         degGeneIndx = [i for i, j in enumerate(degMatrix.data[t,:]) if j == 1]
@@ -155,9 +158,16 @@ def calcTCI (mutcnaMatrixFN, degMatrixFN, tumorTypeFN = None, alphaNull = [1, 1]
  
         # extract the sub-matrix of mutcnaMatrix that only contain the genes that are mutated in a given tumor t
         tumormutGeneIndx = [i for i, j in enumerate(mutcnaMatrix.data[t,:]) if j == 1]        
-        tumorMutMatrix = mutcnaMatrix.data[:,  tumormutGeneIndx]
         tumorMutGenes=  [mutGeneNames[i] for i in tumormutGeneIndx] 
         nTumorMutGenes = len(tumorMutGenes)
+
+        # now extract the sub-matrix of mutcnaMatrix that only contain the genes that are mutated in a given tumor t
+        # check if special operations to create combinations of SGA events are needed.  If combination operation is needed, 
+        # new combined muation matrix will be created                 
+        if opFlag == OR:
+            tumorMutMatrix = createORComb(tumorMutGenes, ppiDict, mutcnaMatrix)      
+        else:  # default.  Extract columns of mutcnaMatrix corresponding to the altered genes          
+            tumorMutMatrix = mutcnaMatrix.data[:,  tumormutGeneIndx]
         
         # Include the tumor-type label into the tumorMutMatrix as a tissue-specific 
         # fake Gt to capture the DEGs that has tissue-specific characterisitics 
@@ -174,11 +184,14 @@ def calcTCI (mutcnaMatrixFN, degMatrixFN, tumorTypeFN = None, alphaNull = [1, 1]
         # calculate single pairwise likelihood that an SGA causes a DEG.  Return a matrix where rows are mutGenes, 
         # columns are DEGs, currently without the joint impact
         tumorLnFScore = calcF(tumorMutMatrix, tumorDEGMatrix,  alphaIJKList)
-
+                
         # If PANCAN analysis, construct combinations of tumor-type label with different GTs to determine the 
         # likelihood of DEG jointly conditioning on GT and tumor-type label.  This enables us to capture
-        # the fact that a GT regulate a GE but they also have a high tendency in co-occurring in a specific tumor type
-        if PANCANFlag:              
+        # the fact that a GT regulate a GE but they also have a high tendency in co-occurring in a specific tumor type            
+        if PANCANFlag:  
+            if opFlag == AND:
+                raise Exception ("Combination of AND operation with PanCan analysis is not implemented")
+                
             # Now, calcuate the log likelihood of joint impact of tumor label with individual GTs on each GE
             jointGTandTumorLableFScore = np.zeros((tumorMutMatrix.shape[1], tumorDEGMatrix.shape[1])) 
                 
@@ -212,12 +225,25 @@ def calcTCI (mutcnaMatrixFN, degMatrixFN, tumorTypeFN = None, alphaNull = [1, 1]
         nullFscore = calcNullF(tumorDEGMatrix, alphaNull)
         tumorLnFScore = np.vstack((tumorLnFScore, nullFscore)) 
 
-        # calcualte the prior probability that any of mutated genes plus A0 can be a cause for a DEG.
+        # calcualte  log of the prior probability that any of mutated genes plus A0 can be a cause for a DEG.
         if PANCANFlag:
-            lntumorMutPriors = calcPanCanLnPrior(tumorMutGenes, dictGeneLength, vtprior[tumorTypeLabelIndx], v0)
+            if not opFlag:
+                lntumorMutPriors = calcPanCanLnPrior(tumorMutGenes, dictGeneLength, vtprior[tumorTypeLabelIndx], v0)
+            elif opFlag == AND:
+                lntumorMutPriors = calcPanCanLnCombANDPrior(tumorMutGenes, dictGeneLength, vtprior[tumorTypeLabelIndx], v0)
+            elif opFlag == OR:
+                lntumorMutPriors = calcPanCanLnCombORPrior(tumorMutGenes, ppiDict, dictGeneLength, mutcnaMatrix.colnames, vtprior[tumorTypeLabelIndx], v0)
         else:
-            lntumorMutPriors = calcLnPrior(tumorMutGenes, dictGeneLength, v0)
-        tumorLnFScore = np.add(tumorLnFScore.T, lntumorMutPriors).T  # add to each column, note double transposes because  numpy broadcasts by row
+            if not opFlag:
+                lntumorMutPriors = calcLnPrior(tumorMutGenes, dictGeneLength, v0)  # a m-dimension vector with m being number of mutations
+            else:
+                if opFlag == AND:
+                    lntumorMutPriors = calcLnCombANDPrior(tumorMutGenes, dictGeneLength, v0)
+                elif opFlag == OR:
+                    lntumorMutPriors = calcLnCombORPrior(tumorMutGenes, ppiDict, dictGeneLength, mutcnaMatrix.colnames, v0)
+                    
+        # add to each column, note double transposes because  numpy broadcasts by row
+        tumorLnFScore = np.add(tumorLnFScore.T, lntumorMutPriors).T  
                
         # calculate the normalizer for each column (GE).  
         colLogSum = calcColNormalizer(tumorLnFScore)       
@@ -363,98 +389,6 @@ def calcF(mutcnaInputMatrix, degInputMatrix, alphaIJKList):
     return fvalues
  
 
-def calcLnPrior(geneNames, dictGeneLength,  v0 = 0.2):
-    """
-    calLnPrior(geneNames, dictGeneLength, v0)
-    
-    Input: 
-        geneNames       A list of SAG-affected genes that are altered in a give tumor
-        dictGeneLength  A dictionary contain the length of all genes
-        v0              A weight of a "leak node" besides SGA-affected genes 
-                        that may contribute to the differential expression of a gene
-
-    Output:
-        lnprior         A list of prior probability values (natural logged) for each given gene
-                        
-    """
-    if v0 >= 1.0 :
-        raise Exception ("Exception from calLnPrior:  v0 >= 1.0")
-        
-    #extract gene lengths for all the genes in 'geneNames'
-    listGeneLength = [dictGeneLength[g]  for g in geneNames]
-    #Calculate the prior probability by taking each ###########FINISH THIS COMMENT
-    inverseLength = [1 / float(x) for x in listGeneLength]
-    sumInverseLength = sum(inverseLength)
-    prior =  [(1 - v0) * x / sumInverseLength for x in inverseLength] + [v0]
-    lnprior = [math.log(x) for x in prior]
-    return lnprior 
-
-
-def calcPanCanLnPrior (geneNames, dictGeneLength,  vtprior, v0 = 0.2):
-    """
-    calPanCanLnPrior(geneNames, dictGeneLength, v0)
-    
-    Input: 
-        geneNames       A list of SAG-affected genes that are altered in a give tumor
-        dictGeneLength  A dictionary contain the length of all genes
-        vt              A weight for tumor type label as potential factor influencign gene expression
-        v0              A weight of a "leak node" besides SGA-affected genes 
-                        that may contribute to the differential expression of a gene
-
-    Output:
-        lnprior         A list of prior probability values (natural logged) for each given gene
-                        
-    """
-    if v0 >= 1.0 :
-        raise Exception ("Exception from calLnPrior:  v0 > 1.0")
-    elif  vtprior > 1.0:
-        raise Exception (vtprior > 1.0)
-        
-    if v0 < 0 or vtprior < 0:
-        raise Exception ("vt or v0 < 0")
-        
-    #extract gene lengths for all the genes in 'geneNames'
-    listGeneLength = [dictGeneLength[g]  for g in geneNames]
-    inverseGeneLength = [1 / float(x) for x in listGeneLength]
-    inverseGeneLength = [float(x) * vtprior for x in inverseGeneLength[:-1]] + inverseGeneLength 
-    sumInverseLength = sum(inverseGeneLength)
-    prior =  [(1 - v0) * x / sumInverseLength for x in inverseGeneLength] + [v0]
-    lnprior = [math.log(x) for x in prior]
-    return lnprior 
-    
-    
-def calcLnCombPrior(combGeneNames, geneLengthDict, v0):
-    """
-    calLnCombPrior(geneNames, dictGeneLength, v0)
-    
-    Input: 
-        combGeneNames   A list of combined SAG-affected genes that are altered in a give tumor
-        dictGeneLength  A dictionary contain the length of all genes
-        v0              A weight of a "leak node" besides SGA-affected genes 
-                        that may contribute to the differential expression of a gene
-
-    Output:
-        lnprior         A list of prior probability values (natural logged) for each given gene combination
-
-    """
-
-    listGeneLength = []
-
-    #extract gene lengths for each gene combination. Gene lengths for combined genes are simply the sum of
-    #the two individual gene lengths.     
-    for name in combGeneNames:
-        #print combGeneNames
-        gene1, gene2 = name.split("/")
-        totalLength = float(geneLengthDict[gene1]) + float(geneLengthDict[gene2])
-        listGeneLength.append(totalLength)
-    
-    #Calculate the prior probability by taking each ###########FINISH THIS COMMENT    
-    inverseLength = [1 / float(x) for x in listGeneLength] 
-    sumInverseLength = sum(inverseLength)
-    prior =  [(1-v0)* x / sumInverseLength for x in inverseLength[:-1]] + [v0]
-    lnprior = [math.log(x) for x in prior]
-    return lnprior 
-    
     
 def main():
     
