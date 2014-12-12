@@ -69,6 +69,10 @@ class NamedMatrix:
                             
             # read in data and generate a numpy data matrix
             self.data = np.genfromtxt(StringIO(lines), delimiter = ",", usecols=tuple(range(1, len(self.colnames)+1)))
+            # except:
+            #     print "Problem generating data from matrix file. Please check data file to make sure matrix is formatted properly."
+            #     return None
+
             if self.data.shape[0] != len(self.rownames): 
                 print "Name matrix: When parsing %s, The size of matrix does not match the length of  rownames" %filename
                 print self.rownames
@@ -103,16 +107,15 @@ class NamedMatrix:
                     self.rownames.append('r' + str(r))
                     
         self.nrows, self.ncols = np.shape(self.data)
-	self.rownames = [x.replace("\"", "") for x in self.rownames]
-	self.colnames = [x.replace("\"", "") for x in self.colnames]
-	# force garbage collection to clean the read in text
-	gc.collect()
-	
+        self.rownames = [x.replace("\"", "") for x in self.rownames]
+        self.colnames = [x.replace("\"", "") for x in self.colnames]
+        # force garbage collection to clean the read in text
+        gc.collect()
+    
         
                     
     def setColnames(self, colnames):
-        ## set the column names 
-    
+        ## set the column names     
         if len(colnames) == len(self.colnames):
             self.colnames = colnames
         elif len(colnames) == self.data.shape[1]:
@@ -148,13 +151,26 @@ class NamedMatrix:
                 raise Exception ("Try to access non-existing column")
             else:
                 return self.data[:, self.colnames.index(colnames)]
-                
-        
+
+    def getValuesByRow(self, rownames):
+        if isinstance (rownames, list):
+            if not set(rownames) <= set(self.rownames):
+                raise Exception("Try to access nonexisting rows")
+            else:
+                rowIndx = map(lambda x: self.rownames.index(x), rownames)
+                ixgrid = np.ix_(rowIndx, range(self.ncols))
+                return self.data[ixgrid]
+
+        if isinstance(rownames, basestring): 
+            if rownames not in self.rownames:
+                raise Exception ("Try to access non-existing row")
+            else:
+                return self.data[self.rownames.index(rownames), :]
+
+                        
     def setValuesByColName(self, values, col):      
         self.data[:,self.colnames.index(col)] = values
         
-        
-     
     def shape(self):
         if self.data != None:
             return np.shape(self.data)
@@ -176,6 +192,23 @@ class NamedMatrix:
                 raise Exception ("Try to access non-existing column")
             else:
                 return self.colnames.index(colnames)
+
+    def getSubMatrixByCols(self, columnNames):
+        if isinstance (columnNames, list):
+            if not set(columnNames) <= set(self.colnames):
+                raise Exception("Try to access nonexisting columns")
+            else:
+                colIndx = map(lambda x: self.colnames.index(x), columnNames)
+                ixgrid = np.ix_(range(self.nrows), colIndx)
+                #print str(ixgrid)
+                return NamedMatrix(npMatrix = self.data[ixgrid], colnames = columnNames, rownames = self.rownames)
+
+        if isinstance(columnNames, basestring): 
+            if columnNames not in self.colnames:
+                raise Exception ("Try to access non-existing column")
+            else:
+                return NamedMatrix(npMatrix = self.data[:, self.colnames.index(columnNames)], colnames = columnNames, rownames = self.rownames)
+
                 
         
     ## Return the position indices of rownames 
@@ -197,13 +230,13 @@ class NamedMatrix:
             try: 
                 outMatrix = open(filename, "w") #Open file containing the output matrix
             except:
-                print "Could not find filepath to output file. Please ensure you have given an existing filepath."
+                print "Could not find filepath to output file: " + filename + ". Please ensure you have given an existing filepath."
                 sys.exit()
         else:                
             try:
                 outMatrix = open(filePath + "/" + filename, "w") #Open file containing the output matrix
             except:
-                print "Could not find filepath to output file. Please ensure you have given an existing filepath."
+                print "Could not open output file: " + filePath + "/" + filename +". Please ensure you have given an existing filepath."
                 sys.exit()
 
         #Writing out the column header. Iterate through colnames in our class, and write
